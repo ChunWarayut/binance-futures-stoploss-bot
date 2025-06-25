@@ -1,0 +1,44 @@
+# Binance Stop Loss Manager Configuration
+
+# API Configuration
+api:
+  rate_limit_calls_per_second: 10
+  max_retries: 3
+  retry_delay: 1
+
+# Monitoring Configuration
+monitoring:
+  normal_interval: 30  # seconds
+  aggressive_interval: 10  # seconds when in profit
+  retry_interval: 60  # seconds for error retry
+  health_check_interval: 300  # seconds
+
+# Stop Loss Configuration
+stop_loss:
+  atr_period: 14
+  atr_multiplier: 2.0
+  risk_percentage: 0.02  # 2% risk per trade
+  trailing_stop_percentage: 0.01  # 1% trailing stop
+  min_stop_distance: 0.005  # 0.5% minimum distance
+  taker_fee_rate: 0.0005  # 0.05% taker fee (configurable)
+
+# Caching Configuration
+cache:
+  position_cache_ttl: 30  # seconds
+  price_cache_ttl: 5  # seconds
+  atr_cache_ttl: 300  # seconds
+
+# Logging Configuration
+logging:
+  level: INFO
+  max_file_size: 10MB
+  backup_count: 5
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+
+# Trading Configuration
+trading:
+  max_positions: 10
+  min_position_size: 0.001
+  enable_trailing_stop: true
+  enable_atr_stop: true
+  enable_percentage_stop: true 
