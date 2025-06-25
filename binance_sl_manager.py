@@ -181,19 +181,16 @@ class BinanceSLManager:
         """Calculate Average True Range (ATR) with caching"""
         cache_key = f"atr_{symbol}_{period}"
         cached_atr = self.cache.get(cache_key, self.config.get('cache.atr_cache_ttl', 300))
-        
         if cached_atr:
             return cached_atr
-        
         try:
-            klines = self.get_klines(symbol, limit=period+1)
+            interval = self.config.get('stop_loss.timeframe', '1h')
+            klines = self.get_klines(symbol, interval=interval, limit=period+1)
             if len(klines) < period+1:
                 return None
-            
             high_prices = [float(k[2]) for k in klines]
             low_prices = [float(k[3]) for k in klines]
             close_prices = [float(k[4]) for k in klines]
-            
             true_ranges = []
             for i in range(1, len(klines)):
                 high_low = high_prices[i] - low_prices[i]
@@ -201,7 +198,6 @@ class BinanceSLManager:
                 low_close = abs(low_prices[i] - close_prices[i-1])
                 true_range = max(high_low, high_close, low_close)
                 true_ranges.append(true_range)
-            
             atr = np.mean(true_ranges[-period:])
             self.cache.set(cache_key, atr, self.config.get('cache.atr_cache_ttl', 300))
             return atr
