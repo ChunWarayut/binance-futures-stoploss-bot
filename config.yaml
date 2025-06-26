@@ -22,6 +22,7 @@ stop_loss:
   min_stop_distance: 0.005  # 0.5% minimum distance
   taker_fee_rate: 0.0005  # 0.05% taker fee (configurable)
   timeframe: '15m'  # Timeframe for indicator calculation (e.g. 15m, 1h, 4h)
+  min_net_profit_to_move_sl: 0.001  # 0.1% threshold for moving SL
 
 # Caching Configuration
 cache:
