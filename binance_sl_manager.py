@@ -262,17 +262,29 @@ class BinanceSLManager:
             step_value = entry_price * quantity * step_percent
             cache_key = f"last_sl_profit_step_{symbol}_{position['positionAmt']}"
             last_step = self.cache.get(cache_key, 86400) or 0.0
+
+            logger.info(f"[SL-DEBUG] Net profit: {net_profit:.4f}, Step value: {step_value:.4f}, Last step: {last_step:.4f}")
+
+            # ถ้ากำไรสุทธิ >= 0 (ไม่ขาดทุน) ให้ขยับ SL มาปิดการขาดทุน (breakeven+buffer) ทันที
+            if net_profit >= 0:
+                if is_long:
+                    sl_breakeven = entry_price + (self.calculate_fee(symbol, entry_price, quantity) / quantity) + (entry_price * breakeven_buffer)
+                else:
+                    sl_breakeven = entry_price - (self.calculate_fee(symbol, entry_price, quantity) / quantity) - (entry_price * breakeven_buffer)
+                sl_breakeven = self.round_price(symbol, sl_breakeven)
+                stop_loss_candidates.append(("BreakevenNoLoss", sl_breakeven))
+                logger.info(f"[SL-DEBUG] ขยับ SL มาปิดการขาดทุน (breakeven+buffer) ที่ {sl_breakeven}")
+
             # ขยับ SL ทุก ๆ step_value ที่กำไรสุทธิเพิ่มขึ้น
             if net_profit > last_step + step_value:
-                # ขยับ SL ใหม่ และอัปเดต last_step
                 if is_long:
                     sl_move = entry_price + (self.calculate_fee(symbol, entry_price, quantity) / quantity) + (entry_price * breakeven_buffer) + ((net_profit // step_value) * step_value / quantity)
                 else:
                     sl_move = entry_price - (self.calculate_fee(symbol, entry_price, quantity) / quantity) - (entry_price * breakeven_buffer) - ((net_profit // step_value) * step_value / quantity)
                 sl_move = self.round_price(symbol, sl_move)
                 stop_loss_candidates.append(("StepByStepSL", sl_move))
-                # อัปเดตค่า step ล่าสุดที่ขยับ SL
                 self.cache.set(cache_key, (net_profit // step_value) * step_value, 86400)
+                logger.info(f"[SL-DEBUG] ขยับ SL แล้ว (step-by-step) ที่ {sl_move}")
 
             # 2. Trailing Stop (True High/Low)
             if mode in ('trailing', 'both'):
