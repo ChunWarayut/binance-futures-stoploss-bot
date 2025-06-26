@@ -240,7 +240,7 @@ class BinanceSLManager:
         return high, low
 
     def calculate_optimal_stop_loss(self, symbol: str, position: dict, current_price: float):
-        """Calculate optimal stop loss using multiple strategies, including breakeven+fee, net profit, and true trailing stop logic."""
+        """Calculate optimal stop loss using multiple strategies, including step-by-step SL adjustment every 0.1% net profit."""
         try:
             entry_price = float(position['entryPrice'])
             position_amt = float(position['positionAmt'])
@@ -252,22 +252,27 @@ class BinanceSLManager:
 
             # Config
             mode = self.config.get('stop_loss.mode', 'both')
-            min_net_profit_to_move_sl = self.config.get('stop_loss.min_net_profit_to_move_sl', 0.005)
+            min_net_profit_to_move_sl = self.config.get('stop_loss.min_net_profit_to_move_sl', 0.001)
             breakeven_buffer = self.config.get('stop_loss.breakeven_buffer', 0.001)
             trailing_percentage = self.config.get('stop_loss.trailing_stop_percentage', 0.01)
+            step_percent = min_net_profit_to_move_sl  # ใช้ step เดียวกับ threshold
 
-            # 1. Breakeven+Profit Buffer
-            if mode in ('breakeven', 'both'):
-                fee = self.calculate_fee(symbol, entry_price, quantity)
-                net_profit = self.calculate_net_profit(symbol, position)
-                net_profit_ratio = net_profit / (entry_price * quantity) if quantity > 0 else 0
-                if net_profit_ratio > min_net_profit_to_move_sl:
-                    if is_long:
-                        sl_move = entry_price + (fee / quantity) + (entry_price * breakeven_buffer)
-                    else:
-                        sl_move = entry_price - (fee / quantity) - (entry_price * breakeven_buffer)
-                    sl_move = self.round_price(symbol, sl_move)
-                    stop_loss_candidates.append(("NetProfitMoveSL", sl_move))
+            # Step-by-step SL adjustment logic
+            net_profit = self.calculate_net_profit(symbol, position)
+            step_value = entry_price * quantity * step_percent
+            cache_key = f"last_sl_profit_step_{symbol}_{position['positionAmt']}"
+            last_step = self.cache.get(cache_key, 86400) or 0.0
+            # ขยับ SL ทุก ๆ step_value ที่กำไรสุทธิเพิ่มขึ้น
+            if net_profit > last_step + step_value:
+                # ขยับ SL ใหม่ และอัปเดต last_step
+                if is_long:
+                    sl_move = entry_price + (self.calculate_fee(symbol, entry_price, quantity) / quantity) + (entry_price * breakeven_buffer) + ((net_profit // step_value) * step_value / quantity)
+                else:
+                    sl_move = entry_price - (self.calculate_fee(symbol, entry_price, quantity) / quantity) - (entry_price * breakeven_buffer) - ((net_profit // step_value) * step_value / quantity)
+                sl_move = self.round_price(symbol, sl_move)
+                stop_loss_candidates.append(("StepByStepSL", sl_move))
+                # อัปเดตค่า step ล่าสุดที่ขยับ SL
+                self.cache.set(cache_key, (net_profit // step_value) * step_value, 86400)
 
             # 2. Trailing Stop (True High/Low)
             if mode in ('trailing', 'both'):
