@@ -16,14 +16,14 @@ monitoring:
 # Stop Loss Configuration
 stop_loss:
   atr_period: 14
-  atr_multiplier: 2.0
+  atr_multiplier: 1.5
   risk_percentage: 0.02  # 2% risk per trade
-  trailing_stop_percentage: 0.01  # 1% trailing stop
+  trailing_stop_percentage: 0.001  # 0.1% trailing stop
   min_stop_distance: 0.005  # 0.5% minimum distance
   taker_fee_rate: 0.0005  # 0.05% taker fee (configurable)
   timeframe: '15m'  # Timeframe for indicator calculation (e.g. 15m, 1h, 4h)
-  min_net_profit_to_move_sl: 0.000005  # 0.0005% threshold for moving SL (extremely frequent)
-  breakeven_buffer: 0.0001  # 0.01% buffer above breakeven point (small but reasonable)
+  min_net_profit_to_move_sl: 0.0005  # 0.05% threshold for moving SL
+  breakeven_buffer: 0.001  # 0.1% buffer above breakeven point
 
 # Caching Configuration
 cache:
@@ -34,8 +34,8 @@ cache:
 # Logging Configuration
 logging:
   level: INFO
-  max_file_size: 10MB
-  backup_count: 5
+  max_bytes: 5242880  # 5MB (5 * 1024 * 1024 bytes)
+  backup_count: 3     # Keep 3 backup files
   format: "%(asctime)s - %(levelname)s - %(message)s"
 
 # Trading Configuration

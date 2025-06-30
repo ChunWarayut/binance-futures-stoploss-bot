@@ -240,13 +240,17 @@ class BinanceSLManager:
         return high, low
 
     def calculate_optimal_stop_loss(self, symbol: str, position: dict, current_price: float):
-        """Calculate optimal stop loss using multiple strategies, including step-by-step SL adjustment every 0.1% net profit."""
+        """Calculate optimal stop loss using multiple strategies, but only if unrealized_pnl > 0 and SL ใหม่ไม่ทำให้ขาดทุน."""
         try:
             entry_price = float(position['entryPrice'])
             position_amt = float(position['positionAmt'])
             is_long = position_amt > 0
             quantity = abs(position_amt)
             unrealized_pnl = float(position['unRealizedProfit'])
+
+            # ป้องกันขยับ SL ถ้ายังไม่มีกำไร
+            if unrealized_pnl <= 0:
+                return None
 
             stop_loss_candidates = []
 
@@ -329,8 +333,16 @@ class BinanceSLManager:
             if stop_loss_candidates:
                 if is_long:
                     best_stop = max(stop_loss_candidates, key=lambda x: x[1])
+                    # ถ้า SL ใหม่ต่ำกว่า entry (ขาดทุน) ไม่ต้องปรับ
+                    if best_stop[1] < entry_price:
+                        logger.info(f"[SL-LOGIC] Skip dynamic SL for {symbol}: SL ({best_stop[1]}) < Entry ({entry_price})")
+                        return None
                 else:
                     best_stop = min(stop_loss_candidates, key=lambda x: x[1])
+                    # ถ้า SL ใหม่สูงกว่า entry (ขาดทุน) ไม่ต้องปรับ
+                    if best_stop[1] > entry_price:
+                        logger.info(f"[SL-LOGIC] Skip dynamic SL for {symbol}: SL ({best_stop[1]}) > Entry ({entry_price})")
+                        return None
                 final_stop = best_stop[1]
             else:
                 final_stop = super().calculate_optimal_stop_loss(symbol, position, current_price)
@@ -439,32 +451,32 @@ class BinanceSLManager:
             return False
 
     def auto_adjust_all_stop_losses(self):
-        """Automatically adjust stop loss for all open positions"""
+        """Automatically adjust stop loss for all open positions (move SL immediately when in profit)."""
         try:
             positions = self.get_open_positions()
-            
             for position in positions:
                 symbol = position['symbol']
                 current_price = self.get_current_price(symbol)
-                
                 if current_price is None:
                     continue
-                
-                # Calculate optimal stop loss
+                existing_stop = self.get_existing_stop_loss(symbol)
+                unrealized_pnl = float(position['unRealizedProfit'])
+                if existing_stop is None:
+                    self.place_initial_stop_loss(symbol, position)
+                    continue
+                if unrealized_pnl <= 0:
+                    # ไม่ต้องขยับ SL ใดๆ คง SL เดิมไว้ (fix 20% margin loss)
+                    logger.info(f"Position {symbol} not in profit, keep initial SL (no trailing)")
+                    continue
+                # ถ้ามีกำไรสุทธิ > 0 ให้ขยับ SL ทันที (auto move)
                 optimal_stop = self.calculate_optimal_stop_loss(symbol, position, current_price)
-                
                 if optimal_stop is None:
                     continue
-                
-                # Check if we need to adjust the stop loss
-                existing_stop = self.get_existing_stop_loss(symbol)
-                
-                if existing_stop is None or self.should_update_stop_loss(existing_stop, optimal_stop, position):
+                if self.should_update_stop_loss(existing_stop, optimal_stop, position):
                     logger.info(f"Updating stop loss for {symbol} to {optimal_stop}")
                     self.adjust_stop_loss(symbol, optimal_stop)
                 else:
                     logger.info(f"Stop loss for {symbol} is already optimal")
-                    
         except Exception as e:
             logger.error(f"Error in auto adjust stop losses: {e}")
 
@@ -501,9 +513,12 @@ class BinanceSLManager:
             current_price = self.get_current_price(pos['symbol'])
             logger.info(f"Position: {pos['symbol']}, "
                        f"Size: {pos['positionAmt']}, "
+                       f"Notional: {pos['notional']}, "
+                       f"Margin: {pos['marginType']}, "
                        f"Entry Price: {pos['entryPrice']}, "
                        f"Current Price: {current_price}, "
-                       f"Unrealized PNL: {pos['unRealizedProfit']}")
+                       f"Unrealized PNL: {pos['unRealizedProfit']}, "
+                       f"{pos}")
 
     def should_use_aggressive_monitoring(self):
         """Check if we should use aggressive monitoring (when positions are in profit)"""
@@ -550,6 +565,51 @@ class BinanceSLManager:
             logger.info(f"Cache stats: {cache_stats}")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
+
+    def place_initial_stop_loss(self, symbol: str, position: dict):
+        """Place initial stop loss at -20% of margin (cross), using correct price calculation."""
+        entry_price = float(position['entryPrice'])
+        position_amt = float(position['positionAmt'])
+        notional = abs(float(position.get('notional', position_amt * entry_price)))
+        leverage = float(position.get('leverage', 10))
+        size = abs(position_amt)
+        current_price = self.get_current_price(symbol)
+
+        # 1. Margin = Notional / Leverage
+        margin = notional / leverage if leverage > 0 else 0
+        # 2. SL(20% Loss) = Margin * 0.2 (absolute loss in USDT)
+        loss_usdt = margin * 0.2  # จำนวนเงินที่ยอมขาดทุน (เป็นบวก)
+
+        # 3. คำนวณราคา Stop Loss ตามประเภทตำแหน่ง
+        is_long = position_amt > 0
+
+        if size == 0 or current_price is None:
+            logger.warning(f"Cannot place SL for {symbol}: size is 0 or no current price")
+            return
+
+        # จำนวนเงินขาดทุนต่อ 1 เหรียญ
+        loss_per_unit = loss_usdt / size
+
+        if is_long:
+            # Long: ขาดทุนเมื่อราคาลดลง จึงลบออกจาก Entry Price
+            stop_price = entry_price - loss_per_unit
+            logger.info(f"\n[SL-CALC] {symbol} Long\n  Entry Price      : {entry_price}\n  Margin           : {margin}\n  Loss (20% Margin): {loss_usdt} USDT\n  Size             : {size}\n  SL Price         : {stop_price}\n")
+
+            # ถ้า SL สูงกว่าหรือเท่าราคาปัจจุบัน ให้ปรับลงเล็กน้อยเพื่อให้คำสั่งถูกต้อง
+            if stop_price >= current_price:
+                stop_price = current_price * 0.999
+                logger.warning(f"Force SL for {symbol}: stop_price ({stop_price}) set just below current_price ({current_price})")
+        else:
+            # Short: ขาดทุนเมื่อราคาขึ้น จึงบวกเข้าไปที่ Entry Price
+            stop_price = entry_price + loss_per_unit
+            logger.info(f"\n[SL-CALC] {symbol} Short\n  Entry Price      : {entry_price}\n  Margin           : {margin}\n  Loss (20% Margin): {loss_usdt} USDT\n  Size             : {size}\n  SL Price         : {stop_price}\n")
+
+            # ถ้า SL ต่ำกว่าหรือเท่าราคาปัจจุบัน ให้ปรับขึ้นเล็กน้อยเพื่อให้คำสั่งถูกต้อง
+            if stop_price <= current_price:
+                stop_price = current_price * 1.001
+                logger.warning(f"Force SL for {symbol}: stop_price ({stop_price}) set just above current_price ({current_price})")
+        stop_price = self.round_price(symbol, stop_price)
+        self.adjust_stop_loss(symbol, stop_price, size)
 
 def main():
     try:

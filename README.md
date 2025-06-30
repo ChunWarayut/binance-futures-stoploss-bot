@@ -1,6 +1,74 @@
-# Binance Stop Loss Manager
+# Binance Futures Stop Loss Manager
 
-An intelligent automated stop loss management system for Binance Futures trading with advanced performance optimizations.
+An automated stop loss manager for Binance Futures that manages stop loss orders based on various strategies including ATR, percentage-based, trailing stops, and breakeven+fee strategies.
+
+## Features
+
+- **Multiple Stop Loss Strategies**: ATR-based, percentage-based, trailing stops, and breakeven+fee
+- **Real-time Monitoring**: Continuously monitors positions and adjusts stop losses
+- **Configurable Parameters**: All settings configurable via `config.yaml`
+- **Rate Limiting**: Built-in rate limiting to respect Binance API limits
+- **Error Handling**: Robust error handling with retry mechanisms
+- **Logging**: Comprehensive logging with automatic log rotation
+- **Caching**: Intelligent caching to reduce API calls
+
+## Log Rotation
+
+The system includes automatic log rotation to prevent log files from growing too large:
+
+- **Max File Size**: 5MB per log file (configurable in `config.yaml`)
+- **Backup Files**: Keeps 3 backup files (configurable)
+- **File Naming**: `sl_manager.log`, `sl_manager.log.1`, `sl_manager.log.2`, etc.
+- **Automatic Rotation**: When the main log file reaches the size limit, it's rotated automatically
+
+### Log Configuration
+
+```yaml
+logging:
+  level: INFO                    # Log level (DEBUG, INFO, WARNING, ERROR)
+  max_bytes: 5242880            # 5MB max file size
+  backup_count: 3               # Number of backup files to keep
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+```
+
+### Manual Log Cleanup
+
+Use the provided cleanup script to remove old log files:
+
+```bash
+./cleanup_logs.sh
+```
+
+This script will:
+- Remove log files older than 7 days
+- Remove any log files larger than 50MB (emergency cleanup)
+- Show current log files and their sizes
+
+## Installation
+
+1. Clone the repository
+2. Install dependencies: `pip install -r requirements.txt`
+3. Copy `.env.example` to `.env` and add your Binance API credentials
+4. Configure settings in `config.yaml`
+5. Run: `python main.py`
+
+## Configuration
+
+See `config.yaml` for all available configuration options.
+
+## Usage
+
+Run the bot with: `python main.py`
+
+The bot will automatically:
+- Monitor all open positions
+- Calculate optimal stop losses
+- Place and adjust stop loss orders
+- Log all activities with rotation
+
+## License
+
+MIT License
 
 ## 🚀 Features
 
@@ -65,6 +133,13 @@ cache:
   position_cache_ttl: 30   # seconds
   price_cache_ttl: 5       # seconds
   atr_cache_ttl: 300       # seconds
+
+# Logging Configuration
+logging:
+  level: INFO                    # Log level (DEBUG, INFO, WARNING, ERROR)
+  max_bytes: 5242880            # 5MB max file size
+  backup_count: 3               # Number of backup files to keep
+  format: "%(asctime)s - %(levelname)s - %(message)s"
 ```
 
 ### Environment Variables (.env)
