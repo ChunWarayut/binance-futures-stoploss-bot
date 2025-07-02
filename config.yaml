@@ -16,14 +16,19 @@ monitoring:
 # Stop Loss Configuration
 stop_loss:
   atr_period: 14
-  atr_multiplier: 1.5
-  risk_percentage: 0.02  # 2% risk per trade
-  trailing_stop_percentage: 0.001  # 0.1% trailing stop
-  min_stop_distance: 0.005  # 0.5% minimum distance
+  atr_multiplier: 1.0  # Reduced from 1.5 to bring stops closer
+  risk_percentage: 0.015  # Reduced from 0.02 to 1.5% risk per trade
+  trailing_stop_percentage: 0.002  # Reduced to 0.2% for ultra-tight trailing
+  min_stop_distance: 0.0015  # Reduced to 0.15% minimum distance
   taker_fee_rate: 0.0005  # 0.05% taker fee (configurable)
   timeframe: '15m'  # Timeframe for indicator calculation (e.g. 15m, 1h, 4h)
-  min_net_profit_to_move_sl: 0.0005  # 0.05% threshold for moving SL
-  breakeven_buffer: 0.001  # 0.1% buffer above breakeven point
+  min_net_profit_to_move_sl: 0.003  # Reduced from 0.0005 to 0.3% threshold for moving SL
+  breakeven_buffer: 0.002  # Increased from 0.001 to 0.2% buffer above breakeven point
+  # New parameters for better control
+  initial_stop_multiplier: 0.8  # Tighter initial stop
+  profit_protection_percentage: 0.005  # 0.5% profit protection level
+  aggressive_trailing_after: 0.01  # Start aggressive trailing after 1% profit
+  initial_stop_percentage: 0.50  # 50% initial stop loss
 
 # Caching Configuration
 cache:

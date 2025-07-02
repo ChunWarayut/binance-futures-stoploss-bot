@@ -1,0 +1,9 @@
+# Binance API Configuration
+BINANCE_API_KEY=oXoo1xh7HoJfzJ1zWlgJUMfgF3K8Yl0r2zKP6u8taHM0S0t2fWcyKxRG8l2hmesT
+BINANCE_API_SECRET=b6jmghG6zUywrVaZmMLPPaZ4HAd43Wev2nVuUxYBoQB3dfv3ozURUPzkBsXFc1QZ
+
+
+# Notification Settings (Optional)
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1381563716230840330/sikMpHRvv2V3jt-25MChpZOlH3-_xymEwBzxzo12t9dl0QOsKENvXZy-cBLsIe6fjpm5
+# Environment
+ENVIRONMENT=production
