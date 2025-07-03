@@ -755,10 +755,10 @@ def main():
                 # Cleanup
                 manager.cleanup()
                 
-                # Dynamic monitoring interval: 5s if open positions, else 30s
+                # Dynamic monitoring interval: 2s if open positions, else 30s
                 open_positions = manager.get_open_positions()
                 if open_positions:
-                    interval = 5
+                    interval = 2
                 else:
                     interval = 30
                 logger.info(f"[Monitor] Next check in {interval} seconds (open positions: {len(open_positions)})")
