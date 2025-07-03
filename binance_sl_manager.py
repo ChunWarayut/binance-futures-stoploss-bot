@@ -755,11 +755,13 @@ def main():
                 # Cleanup
                 manager.cleanup()
                 
-                # Get dynamic interval
-                interval = manager.get_monitoring_interval()
-                logger.info(f"=== Completed monitoring cycle. Next check in {interval} seconds ===")
-                
-                # Wait for dynamic interval before next cycle
+                # Dynamic monitoring interval: 5s if open positions, else 30s
+                open_positions = manager.get_open_positions()
+                if open_positions:
+                    interval = 5
+                else:
+                    interval = 30
+                logger.info(f"[Monitor] Next check in {interval} seconds (open positions: {len(open_positions)})")
                 time.sleep(interval)
                 
             except Exception as e:
