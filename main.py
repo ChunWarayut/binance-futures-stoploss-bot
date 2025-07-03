@@ -55,13 +55,14 @@ def main():
                 # Cleanup
                 sl_manager.cleanup()
                 
-                # Get dynamic interval
-                interval = sl_manager.get_monitoring_interval()
+                # Dynamic monitoring interval: 2s if open positions, else 30s
+                open_positions = sl_manager.get_open_positions()
+                if open_positions:
+                    interval = 2
+                else:
+                    interval = 30
                 logger.info(f"=== Completed monitoring cycle. Next check in {interval} seconds ===")
-                
-                # Wait for dynamic interval before next cycle
-                sleep_time = float(interval) if isinstance(interval, (int, float)) else 30.0
-                time.sleep(sleep_time)
+                time.sleep(interval)
                 
             except Exception as e:
                 logger.error(f"Error in main loop: {e}")
