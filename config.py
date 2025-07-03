@@ -22,15 +22,15 @@ TRADING_PAIRS = [
 ]
 LEVERAGE = 5  # Default leverage
 POSITION_SIZE = 0.01  # Position size in BTC
-TRAILING_STOP_PERCENTAGE = 0.002  # 0.2% trailing stop (ultra tight)
+TRAILING_STOP_PERCENTAGE = 0.001  # 0.1% ultra-tight trailing
 TAKE_PROFIT_PERCENTAGE = 2.0  # 2% take profit
 
 # Enhanced Stop Loss Configuration (optimized settings)
 INITIAL_STOP_PERCENTAGE = 0.50  # 50% initial stop loss
 PROFIT_PROTECTION_PERCENTAGE = 0.005  # 0.5% profit protection threshold
-AGGRESSIVE_TRAILING_AFTER = 0.01  # Start aggressive trailing after 1% profit
+AGGRESSIVE_TRAILING_AFTER = 0.01  # Aggressive trailing after 1% profit
 BREAKEVEN_BUFFER = 0.002  # 0.2% buffer above breakeven
-MIN_STOP_DISTANCE = 0.0015  # 0.15% minimum stop distance
+MIN_STOP_DISTANCE = 0.001  # 0.1% minimum stop distance
 ATR_MULTIPLIER = 1.0  # ATR multiplier for initial stops (reduced from default)
 RISK_PERCENTAGE = 0.015  # 1.5% risk per trade (reduced from 2%)
 

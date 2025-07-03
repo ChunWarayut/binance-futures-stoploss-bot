@@ -252,8 +252,8 @@ class BinanceSLManager:
 
     def calculate_net_profit(self, symbol: str, position: dict) -> float:
         """Calculate net profit (Unrealized PnL - Fee) for a position."""
-        entry_price = float(position['entryPrice'])
-        position_amt = float(position['positionAmt'])
+        entry_price = float(position['entryPrice']) if isinstance(position['entryPrice'], (int, float, str)) else 0.0
+        position_amt = float(position['positionAmt']) if isinstance(position['positionAmt'], (int, float, str)) else 0.0
         quantity = abs(position_amt)
         unrealized_pnl = float(position['unRealizedProfit'])
         fee = self.calculate_fee(symbol, entry_price, quantity)
@@ -278,14 +278,25 @@ class BinanceSLManager:
     def calculate_optimal_stop_loss(self, symbol: str, position: dict, current_price: float):
         """Enhanced stop loss calculation with better profit capture and risk management"""
         try:
-            entry_price = float(position['entryPrice'])
-            position_amt = float(position['positionAmt'])
-            is_long = position_amt > 0
-            quantity = abs(position_amt)
-            unrealized_pnl = float(position['unRealizedProfit'])
-            
+            # Safe float conversion helper
+            def safe_float(val, default=0.0):
+                try:
+                    if isinstance(val, (int, float, str)):
+                        return float(val)
+                except Exception:
+                    pass
+                return default
+
+            # Use safe_float everywhere for position fields
+            entry_price = safe_float(position.get('entryPrice'))
+            position_amt = safe_float(position.get('positionAmt'))
+            notional = abs(safe_float(position.get('notional', position_amt * entry_price)))
+            leverage = safe_float(position.get('leverage', 10), 10.0)
+            size = abs(position_amt)
+            current_price = self.get_current_price(symbol)
+
             # Calculate profit percentage
-            if is_long:
+            if position_amt > 0:
                 profit_pct = (current_price - entry_price) / entry_price
             else:
                 profit_pct = (entry_price - current_price) / entry_price
@@ -293,14 +304,20 @@ class BinanceSLManager:
             logger.info(f"[Enhanced SL] {symbol}: Entry={entry_price}, Current={current_price}, Profit%={profit_pct:.4f}")
             
             # Get configuration values
-            initial_stop_multiplier = self.config.get('stop_loss.initial_stop_multiplier', 0.8)
-            trailing_percentage = self.config.get('stop_loss.trailing_stop_percentage', 0.005)
-            profit_protection_pct = self.config.get('stop_loss.profit_protection_percentage', 0.01)
+            initial_stop_multiplier = float(self.config.get('stop_loss.initial_stop_multiplier', 0.8))
+            trailing_percentage = float(self.config.get('stop_loss.trailing_stop_percentage', 0.005))
+            profit_protection_pct = float(self.config.get('stop_loss.profit_protection_percentage', 0.01))
             aggressive_trailing_after = float(self.config.get('stop_loss.aggressive_trailing_after', 0.015))
-            min_stop_distance = self.config.get('stop_loss.min_stop_distance', 0.003)
+            min_stop_distance = float(self.config.get('stop_loss.min_stop_distance', 0.003))
             
             # Calculate net profit for fee consideration
             net_profit = self.calculate_net_profit(symbol, position)
+            
+            # If not in profit, always reset SL to -50% of margin (initial SL)
+            if net_profit <= 0:
+                logger.info(f"[Auto SL] {symbol}: Not in profit, reset SL to -50% of margin (initial SL)")
+                self.place_initial_stop_loss(symbol, position)
+                return None
             
             # Strategy 1: Initial tight stop loss (for new positions)
             existing_stop = self.get_existing_stop_loss(symbol)
@@ -308,14 +325,14 @@ class BinanceSLManager:
                 atr = self.calculate_atr(symbol, self.config.get('stop_loss.atr_period', 14))
                 if atr:
                     atr_multiplier = self.config.get('stop_loss.atr_multiplier', 1.0) * initial_stop_multiplier
-                    if is_long:
+                    if position_amt > 0:
                         initial_stop = entry_price - (atr * atr_multiplier)
                     else:
                         initial_stop = entry_price + (atr * atr_multiplier)
                     
                     # Ensure minimum distance
                     min_distance = entry_price * min_stop_distance
-                    if is_long:
+                    if position_amt > 0:
                         initial_stop = max(initial_stop, entry_price - min_distance)
                     else:
                         initial_stop = min(initial_stop, entry_price + min_distance)
@@ -326,10 +343,10 @@ class BinanceSLManager:
             # Strategy 2: Breakeven protection when just becoming profitable (small profits only)
             # Only use breakeven protection for small profits (< 1%), otherwise use trailing
             if net_profit > 0 and profit_pct < 0.01:  # Only for profits less than 1%
-                fee_per_unit = self.calculate_fee(symbol, entry_price, quantity) / quantity
+                fee_per_unit = self.calculate_fee(symbol, entry_price, size) / size
                 breakeven_buffer = self.config.get('stop_loss.breakeven_buffer', 0.002)
                 
-                if is_long:
+                if position_amt > 0:
                     breakeven_stop = entry_price + fee_per_unit + (entry_price * breakeven_buffer)
                 else:
                     breakeven_stop = entry_price - fee_per_unit - (entry_price * breakeven_buffer)
@@ -341,17 +358,17 @@ class BinanceSLManager:
             if profit_pct >= 0.01 and profit_pct < aggressive_trailing_after:
                 high, low = self.get_position_high_low(symbol, position, current_price)
                 
-                if is_long:
+                if position_amt > 0:
                     trailing_stop = high * (1 - trailing_percentage)
                 else:
                     trailing_stop = low * (1 + trailing_percentage)
                 
                 # Ensure it's better than current stop
                 if existing_stop:
-                    if is_long and trailing_stop > existing_stop:
+                    if position_amt > 0 and trailing_stop > existing_stop:
                         logger.info(f"[Enhanced SL] Normal trailing for {symbol}: {trailing_stop} (profit: {profit_pct:.2%})")
                         return self.round_price(symbol, trailing_stop)
-                    elif not is_long and trailing_stop < existing_stop:
+                    elif position_amt < 0 and trailing_stop < existing_stop:
                         logger.info(f"[Enhanced SL] Normal trailing for {symbol}: {trailing_stop} (profit: {profit_pct:.2%})")
                         return self.round_price(symbol, trailing_stop)
                 else:
@@ -360,12 +377,12 @@ class BinanceSLManager:
             
             # Strategy 3: Profit protection - secure profits when reaching threshold
             if profit_pct >= profit_protection_pct:
-                fee_per_unit = self.calculate_fee(symbol, entry_price, quantity) / quantity
+                fee_per_unit = self.calculate_fee(symbol, entry_price, size) / size
                 
                 # Secure at least 50% of current profit
                 profit_to_secure = profit_pct * 0.5
                 
-                if is_long:
+                if position_amt > 0:
                     profit_protection_stop = entry_price + fee_per_unit + (entry_price * profit_to_secure)
                 else:
                     profit_protection_stop = entry_price - fee_per_unit - (entry_price * profit_to_secure)
@@ -375,23 +392,23 @@ class BinanceSLManager:
             
             # Strategy 4: Aggressive trailing when highly profitable
             if profit_pct >= aggressive_trailing_after:
-                # Use even tighter trailing percentage for aggressive trailing
-                aggressive_trailing_pct = trailing_percentage * 0.5  # 50% of normal trailing
+                # Use fixed ultra-tight aggressive trailing percentage (0.05%)
+                aggressive_trailing_pct = 0.0005
                 
                 # Get position high/low for true trailing
                 high, low = self.get_position_high_low(symbol, position, current_price)
                 
-                if is_long:
+                if position_amt > 0:
                     aggressive_trailing_stop = high * (1 - aggressive_trailing_pct)
                 else:
                     aggressive_trailing_stop = low * (1 + aggressive_trailing_pct)
                 
                 # Ensure it's better than current stop
                 if existing_stop:
-                    if is_long and aggressive_trailing_stop > existing_stop:
+                    if position_amt > 0 and aggressive_trailing_stop > existing_stop:
                         logger.info(f"[Enhanced SL] Aggressive trailing for {symbol}: {aggressive_trailing_stop}")
                         return self.round_price(symbol, aggressive_trailing_stop)
-                    elif not is_long and aggressive_trailing_stop < existing_stop:
+                    elif position_amt < 0 and aggressive_trailing_stop < existing_stop:
                         logger.info(f"[Enhanced SL] Aggressive trailing for {symbol}: {aggressive_trailing_stop}")
                         return self.round_price(symbol, aggressive_trailing_stop)
             
@@ -399,17 +416,17 @@ class BinanceSLManager:
             if profit_pct > 0:  # Only trail when in profit
                 high, low = self.get_position_high_low(symbol, position, current_price)
                 
-                if is_long:
+                if position_amt > 0:
                     trailing_stop = high * (1 - trailing_percentage)
                 else:
                     trailing_stop = low * (1 + trailing_percentage)
                 
                 # Ensure it's better than current stop
                 if existing_stop:
-                    if is_long and trailing_stop > existing_stop:
+                    if position_amt > 0 and trailing_stop > existing_stop:
                         logger.info(f"[Enhanced SL] Normal trailing for {symbol}: {trailing_stop}")
                         return self.round_price(symbol, trailing_stop)
-                    elif not is_long and trailing_stop < existing_stop:
+                    elif position_amt < 0 and trailing_stop < existing_stop:
                         logger.info(f"[Enhanced SL] Normal trailing for {symbol}: {trailing_stop}")
                         return self.round_price(symbol, trailing_stop)
                 else:
@@ -659,24 +676,30 @@ class BinanceSLManager:
             logger.error(f"Error during cleanup: {e}")
 
     def place_initial_stop_loss(self, symbol: str, position: dict):
-        """Place initial stop loss based on configured percentage of margin (cross), using correct price calculation."""
-        entry_price = float(position['entryPrice'])
-        position_amt = float(position['positionAmt'])
-        notional = abs(float(position.get('notional', position_amt * entry_price)))
-        leverage = float(position.get('leverage', 10))
+        """Place initial stop loss at exactly -50% of margin (cross), no ATR, no multiplier."""
+        # Safe float conversion helper
+        def safe_float(val, default=0.0):
+            try:
+                if isinstance(val, (int, float, str)):
+                    return float(val)
+            except Exception:
+                pass
+            return default
+
+        # Use safe_float everywhere for position fields
+        entry_price = safe_float(position.get('entryPrice'))
+        position_amt = safe_float(position.get('positionAmt'))
+        notional = abs(safe_float(position.get('notional', position_amt * entry_price)))
+        leverage = safe_float(position.get('leverage', 10), 10.0)
         size = abs(position_amt)
         current_price = self.get_current_price(symbol)
 
         # 1. Margin = Notional / Leverage
         margin = notional / leverage if leverage > 0 else 0
-        # 2. Get initial stop percentage from config (default 50%)
-        initial_stop_pct = self.config.get('stop_loss.initial_stop_percentage', 0.50)
-        # 3. SL Loss = Margin * initial_stop_percentage (absolute loss in USDT)
-        loss_usdt = margin * initial_stop_pct  # จำนวนเงินที่ยอมขาดทุน (เป็นบวก)
+        # 2. SL(50% Loss) = Margin * 0.5 (absolute loss in USDT)
+        loss_usdt = margin * 0.5
 
-        # 3. คำนวณราคา Stop Loss ตามประเภทตำแหน่ง
         is_long = position_amt > 0
-
         if size == 0 or current_price is None:
             logger.warning(f"Cannot place SL for {symbol}: size is 0 or no current price")
             return
@@ -685,26 +708,18 @@ class BinanceSLManager:
         loss_ratio = loss_usdt / notional if notional > 0 else 0
 
         if is_long:
-            # Long: ขาดทุนเมื่อราคาลดลง จึงลดราคาตามสัดส่วนที่คำนวณได้
             stop_price = entry_price * (1 - loss_ratio)
-            logger.info(f"\n[SL-CALC] {symbol} Long\n  Entry Price      : {entry_price}\n  Margin           : {margin}\n  Loss ({initial_stop_pct*100:.0f}% Margin): {loss_usdt} USDT\n  Size             : {size}\n  Loss Ratio       : {loss_ratio:.4f}\n  SL Price         : {stop_price}\n")
-
-            # ถ้า SL สูงกว่าหรือเท่าราคาปัจจุบัน ให้ปรับลงเล็กน้อยเพื่อให้คำสั่งถูกต้อง
+            logger.info(f"[INIT SL] {symbol} Long | Entry: {entry_price} | Margin: {margin} | Loss(50%): {loss_usdt} | SL: {stop_price}")
             if stop_price >= current_price:
                 stop_price = current_price * 0.999
                 logger.warning(f"Force SL for {symbol}: stop_price ({stop_price}) set just below current_price ({current_price})")
         else:
-            # Short: ขาดทุนเมื่อราคาขึ้น จึงเพิ่มราคาตามสัดส่วนที่คำนวณได้
             stop_price = entry_price * (1 + loss_ratio)
-            logger.info(f"\n[SL-CALC] {symbol} Short\n  Entry Price      : {entry_price}\n  Margin           : {margin}\n  Loss ({initial_stop_pct*100:.0f}% Margin): {loss_usdt} USDT\n  Size             : {size}\n  Loss Ratio       : {loss_ratio:.4f}\n  SL Price         : {stop_price}\n")
-
-            # ถ้า SL ต่ำกว่าหรือเท่าราคาปัจจุบัน ให้ปรับขึ้นเล็กน้อยเพื่อให้คำสั่งถูกต้อง
+            logger.info(f"[INIT SL] {symbol} Short | Entry: {entry_price} | Margin: {margin} | Loss(50%): {loss_usdt} | SL: {stop_price}")
             if stop_price <= current_price:
                 stop_price = current_price * 1.001
                 logger.warning(f"Force SL for {symbol}: stop_price ({stop_price}) set just above current_price ({current_price})")
         stop_price = self.round_price(symbol, stop_price)
-        
-        # ส่งแจ้งเตือน Discord สำหรับ Initial Stop Loss
         position_side = "LONG" if is_long else "SHORT"
         self.send_discord_notification(
             f"🛡️ **Initial Stop Loss Set**\n"
@@ -712,10 +727,9 @@ class BinanceSLManager:
             f"**Position:** {position_side}\n"
             f"**Entry Price:** {entry_price}\n"
             f"**Stop Loss:** {stop_price}\n"
-            f"**Risk:** {initial_stop_pct*100:.0f}% of margin ({loss_usdt:.2f} USDT)\n"
+            f"**Risk:** 50% of margin ({loss_usdt:.2f} USDT)\n"
             f"**Size:** {size}"
         )
-        
         self.adjust_stop_loss(symbol, stop_price, size)
 
 def main():
